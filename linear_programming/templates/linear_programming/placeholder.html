@@ -1,0 +1,12 @@
+{% extends 'linear_programming/base.html' %}
+{% load static %}
+
+{% block title %}{{ method_name }} - OptiSolve{% endblock %}
+
+{% block content %}
+<h1 class="mt-4">{{ method_name }}</h1>
+<div class="alert alert-warning mt-4" role="alert">
+    <p>¡Ups! La funcionalidad de **{{ method_name }}** aún está en desarrollo.</p>
+    <p>Por favor, regresa al <a href="{% url 'graphical_method' %}" class="alert-link">Método Gráfico</a> para comenzar a optimizar.</p>
+</div>
+{% endblock %}

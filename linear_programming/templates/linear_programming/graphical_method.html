@@ -1,0 +1,312 @@
+{% extends 'linear_programming/base.html' %}
+{% load static %}
+
+{% block title %}Método Gráfico - OptiSolve{% endblock %}
+
+{% block content %}
+<h1 class="mb-4">Método Gráfico (2 Variables)</h1>
+
+<div class="row">
+    <div class="col-md-5">
+        
+        <div class="card mb-4">
+            <div class="card-header bg-success text-white">1. Definir Problema</div>
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    
+                    <div class="mb-3">
+                        <label for="objective_type" class="form-label">Objetivo de Optimización</label>
+                        <select class="form-select" id="objective_type" name="objective_type" required>
+                            <option value="MAX" {% if input_data.objective_type == 'MAX' %}selected{% endif %}>Maximizar</option>
+                            <option value="MIN" {% if input_data.objective_type == 'MIN' %}selected{% endif %}>Minimizar</option>
+                        </select>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="objective_func" class="form-label">Función Objetivo (Z)</label>
+                        <input type="text" class="form-control" id="objective_func" name="objective_func" 
+                               placeholder="Ej: 8*x1 + 10*x2" required 
+                               value="{{ input_data.objective_func|default:'' }}">
+                    </div>
+                    
+                    <label class="form-label">Restricciones</label>
+                    
+                    <div id="restrictions-container">
+                        </div>
+                    
+                    <div class="form-text mb-3">Recuerda que x1, x2 ≥ 0 (no negatividad)</div>
+                    
+                    <button id="add-restriction" type="button" class="btn btn-outline-secondary btn-sm mb-3">
+                        + Añadir Restricción
+                    </button>
+
+                    
+                    <button type="submit" class="btn btn-success w-100">2. Resolver Gráficamente</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-7">
+        <div class="card">
+            <div class="card-header bg-dark text-white">Gráfico de la Región Factible</div>
+            <div class="card-body">
+                <canvas id="simplexChart" style="height: 400px; width:400px"></canvas>
+            
+            </div>
+            <button id="download-chart" type="button" class="btn btn-sm btn-light">
+                Descargar PNG ⬇️
+            </button>
+
+        </div>
+    </div>
+
+    <div class="col-12 mt-4">
+        {% if results %}
+        <div class="card">
+            <div class="card-header bg-info text-dark">3. Resultados y Vértices</div>
+            <div class="card-body">
+                {% if results.error %}
+                    <div class="alert alert-danger">{{ results.error }}</div>
+                {% else %}
+                    <p class="h5 text-success">🎉 Solución Óptima:</p>
+                    <p class="fs-4">Z = {{ results.optimal_value|floatformat:2 }}</p>
+                    <p>Punto óptimo:</p>
+                    <ul>
+                        <li>X1 = {{ results.optimal_point.0|floatformat:2 }}</li>
+                        <li>X2 = {{ results.optimal_point.1|floatformat:2 }}</li>
+                        
+                    </ul>
+                    
+                    <h5 class="mt-4">Vértices Factibles:</h5>
+                    <table class="table table-sm table-striped">
+                        <thead class="table-dark">
+                            <tr><th>Punto</th><th>X1</th><th>X2</th><th>Valor Z</th><th>Óptimo</th></tr>
+                        </thead>
+                        <tbody>
+                            {% for vertex in results.vertices %}
+                            <tr class="{% if vertex.is_optimal %}table-success fw-bold{% endif %}">
+                                <td>{{ vertex.Punto }}</td>
+                                <td>{{ vertex.X1|floatformat:2 }}</td>
+                                <td>{{ vertex.X2|floatformat:2 }}</td>
+                                <td>{{ vertex.Z|floatformat:2 }}</td>
+                                <td>{% if vertex.is_optimal %}✅{% endif %}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // 🌟 SOLUCIÓN: Usamos la variable SERIALIZADA de Python
+    // La inyección es segura porque usamos |safe, y JSON.parse recibe una cadena JSON válida.
+    const savedRestrictionsString = '{{ restrictions_json|safe }}';
+    
+    let savedRestrictions = [];
+    try {
+        savedRestrictions = JSON.parse(savedRestrictionsString);
+    } catch (e) {
+        console.error("Error al parsear las restricciones guardadas (JSON roto).", e);
+    }
+    
+    const container = document.getElementById('restrictions-container');
+    const addButton = document.getElementById('add-restriction');
+    let restrictionCount = 0; 
+
+    // --- Lógica JavaScript para añadir, eliminar y rellenar restricciones ---
+    
+    function createRestrictionGroup(index, value = '') {
+        const newGroup = document.createElement('div');
+        newGroup.classList.add('input-group', 'mb-3', 'restriction-group');
+        
+        newGroup.innerHTML = `
+            <span class="input-group-text">R${index}</span>
+            <input type="text" class="form-control" name="restriction_${index}" 
+                   placeholder="Ej: 5*x1 + 8*x2 <= 1000" required 
+                   value="${value}">
+            <button class="btn btn-outline-danger remove-restriction" type="button" data-index="${index}">
+                -
+            </button>
+        `;
+        return newGroup;
+    }
+    
+    // Función para actualizar los números (R1, R2...) y el contador
+    function updateIndices() {
+        const groups = container.querySelectorAll('.restriction-group');
+        
+        groups.forEach((group, index) => {
+            const newIndex = index + 1;
+            const span = group.querySelector('.input-group-text');
+            const input = group.querySelector('.form-control');
+            const removeButton = group.querySelector('.remove-restriction');
+
+            span.textContent = 'R' + newIndex;
+            input.name = 'restriction_' + newIndex;
+            removeButton.dataset.index = newIndex;
+
+            // Ocultar/Mostrar el botón de eliminar
+            if (groups.length <= 1) {
+                removeButton.classList.add('d-none');
+            } else {
+                removeButton.classList.remove('d-none');
+            }
+        });
+
+        restrictionCount = groups.length;
+    }
+    
+    // Rellenar las restricciones al cargar (incluyendo las guardadas)
+    function initializeRestrictions() {
+        // Limpiar el contenedor antes de rellenar
+        container.innerHTML = '';
+        
+        if (savedRestrictions.length > 0) {
+            savedRestrictions.forEach((value, index) => {
+                container.appendChild(createRestrictionGroup(index + 1, value));
+            });
+        } else {
+            // Inicializar con 2 vacías si no hay datos guardados
+            container.appendChild(createRestrictionGroup(1, ''));
+            container.appendChild(createRestrictionGroup(2, ''));
+        }
+        updateIndices();
+    }
+    
+    // 1. Manejar la adición de una nueva restricción
+    addButton.addEventListener('click', function() {
+        restrictionCount++;
+        container.appendChild(createRestrictionGroup(restrictionCount));
+        updateIndices();
+    });
+
+    // 2. Manejar la eliminación de una restricción (delegación de eventos)
+    container.addEventListener('click', function(e) {
+        if (e.target.closest('.remove-restriction')) {
+            const groupToRemove = e.target.closest('.restriction-group');
+            
+            if (container.querySelectorAll('.restriction-group').length > 1) {
+                groupToRemove.remove();
+                updateIndices();
+            } else {
+                alert("Debe haber al menos una restricción estructural.");
+            }
+        }
+    });
+
+    // Inicializar al cargar la página
+    document.addEventListener('DOMContentLoaded', initializeRestrictions);
+
+
+    // =================================================================
+    // 3. Lógica Chart.js para dibujar el gráfico
+    // =================================================================
+    
+    const chartDataJson = {{ chart_data_json|safe }}; 
+    
+    if (chartDataJson && chartDataJson.lines) {
+        const datasets = [];
+        
+        // 1. Añadir las líneas de restricción (rectas)
+        chartDataJson.lines.forEach(line => {
+            datasets.push({
+                label: line.label,
+                data: line.data,
+                borderColor: line.color,
+                borderWidth: 2,
+                fill: false,
+                pointRadius: 0, 
+                showLine: true,
+                tension: 0,
+                parsing: false,
+                type: 'line' 
+            });
+        });
+
+        // 2. Añadir los puntos (vértices) de la región factible
+        if (chartDataJson.region_vertices) {
+             const pointsData = chartDataJson.region_vertices.map(v => ({
+                x: v[0],
+                y: v[1]
+            }));
+
+            datasets.push({
+                label: 'Vértices Factibles',
+                data: pointsData,
+                backgroundColor: 'rgba(50, 200, 50, 1)', 
+                pointRadius: 6,
+                pointStyle: 'circle',
+                showLine: false,
+                type: 'scatter'
+            });
+        }
+        
+        const maxScale = chartDataJson.max_scale || 100;
+        
+        const ctx = document.getElementById('simplexChart').getContext('2d');
+        
+        new Chart(ctx, {
+            data: { datasets: datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
+                        type: 'linear',
+                        position: 'bottom',
+                        title: { display: true, text: 'X1' },
+                        min: 0,
+                        max: maxScale
+                    },
+                    y: {
+                        type: 'linear',
+                        title: { display: true, text: 'X2' },
+                        min: 0,
+                        max: maxScale
+                    }
+                },
+                plugins: {
+                    legend: { display: true },
+                    title: { display: true, text: 'Región de Soluciones Factibles' }
+                }
+            }
+        });
+        // =================================================================
+        // 4. Lógica de Descarga de Gráfico
+        // =================================================================
+        
+        const downloadButton = document.getElementById('download-chart');
+        
+        if (downloadButton) {
+            downloadButton.addEventListener('click', function() {
+                // 1. Obtener el elemento canvas
+                const canvas = document.getElementById('simplexChart');
+                
+                // 2. Convertir el contenido del canvas a una URL de datos (formato base64)
+                // Se usa 'image/png' para un formato de alta calidad
+                const imageURL = canvas.toDataURL('image/png', 1.0);
+                
+                // 3. Crear un enlace temporal para forzar la descarga
+                const a = document.createElement('a');
+                a.href = imageURL;
+                a.download = 'OptiSolve_Metodo_Grafico.png'; // Nombre del archivo
+                
+                // 4. Simular el clic en el enlace y luego eliminarlo
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            });
+        }
+    }
+</script>
+{% endblock %}
