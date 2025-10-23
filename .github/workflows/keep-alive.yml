@@ -1,0 +1,25 @@
+# Nombre del workflow
+name: OptiSolv Keep-Alive
+
+on:
+  # Disparador: se ejecuta en un horario programado (schedule)
+  schedule:
+    # Usamos la expresión cron que definimos (en UTC)
+    # Cada 10 min, excepto entre las 6:00 y 10:59 UTC
+    # (Que es 1:00 AM a 5:59 AM en Colombia)
+    - cron: '*/10 0-5,11-23 * * *'
+
+  # (Opcional) Permite ejecutarlo manualmente desde la pestaña "Actions"
+  workflow_dispatch:
+
+jobs:
+  # Nombre del "job" (tarea)
+  ping-site:
+    runs-on: ubuntu-latest
+    
+    steps:
+      # Nombre del paso
+      - name: Ping OptiSolv URL
+        # Comando que se ejecuta (el mismo que ibas a usar en Render)
+        # Usa -f para que el "workflow" falle si tu web está caída
+        run: curl -s -f https://optisolv.onrender.com
